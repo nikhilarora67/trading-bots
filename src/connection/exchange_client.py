@@ -8,7 +8,6 @@ from ..models.messages import Envelope, MessageHeader, NewOrderRequest, CancelRe
 
 class ExchangeClient:
     """ZeroMQ connection to the exchange.
-
     Orders and cancels go out on a PUSH socket (5555), acks/rejects/fills come
     back on a PULL socket (5556) handled by a background listener thread. The
     id counters and order maps are shared between both threads, so they are
