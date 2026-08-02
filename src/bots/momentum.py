@@ -28,6 +28,9 @@ class MomentumBot(BaseBot):
 
         short_avg = sum(history[-self.short_window:]) / self.short_window
         long_avg = sum(history[-self.long_window:]) / self.long_window
+        # equal averages is not a crossover, it's the absence of one
+        if short_avg == long_avg:
+            return
         signal = "BUY" if short_avg > long_avg else "SELL"
 
         if signal == self.last_signal[symbol]:

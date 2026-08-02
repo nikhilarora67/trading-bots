@@ -103,6 +103,34 @@ positions. There's also no persistence, no reconnect logic, and limit prices
 are just the last tick, so treat the strategies as signal demos rather than
 anything you'd point at real money.
 
+## Tests
+
+```
+pip install -r requirements.txt
+pytest
+```
+
+Three suites, each proving a different thing.
+
+`test_strategies.py` drives each strategy with a hand-fed price series and
+checks the orders it produces, using an offline socket stub so there's no
+network. Several of these are regressions for specific bugs, a VWAP target that
+doesn't divide evenly by the slice count, a market maker fill that would breach
+the inventory cap, an arbitrage window stuffed with stale ratio samples.
+
+`test_order_tracking.py` pushes hand-built messages through the client's real
+parsing path to hit the orderings that only happen under concurrency, a cancel
+racing an ack, a fill beating a cancel, a late ack for an already-cancelled
+order. These are the cases the order-tracking maps have to get right.
+
+`test_concurrency.py` is the stress test. It runs the client against a real
+ZeroMQ endpoint and fires a thousand orders from four threads at once, with
+cancels deliberately racing their own fills, while another thread reads the
+shared state throughout. It asserts every order id came out unique, every
+tracking map ended empty, the final position netted exactly flat, and the
+reader thread never saw a half-updated structure. If the locking or the
+register-before-send ordering were wrong, this is where it would fail.
+
 ## Layout
 
 ```
@@ -110,4 +138,5 @@ src/
   connection/   ExchangeClient: sockets, listener thread, order tracking
   models/       message dataclasses and the enums shared with the exchange
   bots/         BaseBot plus the four strategies
+tests/          strategy, order-tracking, and concurrency suites
 ```

@@ -17,6 +17,7 @@ class ArbitrageBot(BaseBot):
         self.order_qty = order_qty
 
         self.prices = {symbol_a: None, symbol_b: None}
+        self.updated = set()
         self.ratio_history = []
         self.in_trade = False
         self.trade_direction = None  # "long_ratio" or "short_ratio"
@@ -26,10 +27,19 @@ class ArbitrageBot(BaseBot):
             return
 
         self.prices[symbol] = price
+        self.updated.add(symbol)
+
         price_a = self.prices[self.symbol_a]
         price_b = self.prices[self.symbol_b]
         if price_a is None or price_b is None or price_b == 0:
             return
+
+        # one ratio sample per pair of fresh prices. Sampling on every tick of
+        # either leg would stuff the window with duplicates of a stale price
+        # and collapse the standard deviation the z-score depends on.
+        if len(self.updated) < 2:
+            return
+        self.updated.clear()
 
         ratio = price_a / price_b
         self.ratio_history.append(ratio)

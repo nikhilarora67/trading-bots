@@ -11,4 +11,4 @@ __all__ = [
     "MarketMakerBot",
     "VWAPBot",
 ]
-]
+

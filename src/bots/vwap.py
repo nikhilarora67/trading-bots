@@ -17,12 +17,19 @@ class VWAPBot(BaseBot):
         self.duration_seconds = duration_seconds
         self.num_slices = num_slices
 
-        self.slice_qty = target_qty // num_slices
+        # round the slice up, not down. Floor division leaves a remainder
+        # the loop never sends, so the parent order could never complete.
+        self.slice_qty = max(1, -(-target_qty // num_slices))
         self.slice_interval = duration_seconds / num_slices
 
+        # sent_qty is only written on the tick path, executed_qty and
+        # total_cost only on the listener thread when fills land. One writer
+        # each, so no lock is needed. Whatever is still working is just the
+        # difference between them.
+        self.sent_qty = 0
         self.executed_qty = 0
-        self.slices_sent = 0
         self.total_cost = 0.0
+        self.slices_sent = 0
 
         self.start_time = None
         self.last_slice_time = None
@@ -36,6 +43,17 @@ class VWAPBot(BaseBot):
         print(f"[VWAP] {self.target_side.name} {self.target_qty} {self.symbol}: "
               f"{self.num_slices} slices of {self.slice_qty} over {self.duration_seconds}s")
 
+    def on_fill(self, symbol, side, qty, price):
+        super().on_fill(symbol, side, qty, price)
+        if symbol != self.symbol or side != self.target_side:
+            return
+        # total_cost is written before executed_qty so a concurrent read of
+        # the average never divides by a count the cost hasn't caught up to
+        self.total_cost += qty * price
+        self.executed_qty += qty
+        print(f"[VWAP] executed {self.executed_qty}/{self.target_qty} | "
+              f"avg {self.get_execution_avg_price():.2f} | working {self.get_working_qty()}")
+
     def on_tick(self, symbol, price, timestamp=None, volume=None):
         if symbol != self.symbol or self.start_time is None:
             return
@@ -44,7 +62,7 @@ class VWAPBot(BaseBot):
         if volume:
             self.tick_volumes.append(volume)
 
-        if self.executed_qty >= self.target_qty:
+        if self.sent_qty >= self.target_qty:
             return
 
         elapsed = time.time() - self.last_slice_time
@@ -52,7 +70,7 @@ class VWAPBot(BaseBot):
             self._send_slice(price)
 
     def _send_slice(self, price):
-        qty = min(self.slice_qty, self.target_qty - self.executed_qty)
+        qty = min(self.slice_qty, self.target_qty - self.sent_qty)
         if qty <= 0:
             return
 
@@ -61,12 +79,14 @@ class VWAPBot(BaseBot):
         else:
             self.sell(self.symbol, qty, price)
 
-        self.executed_qty += qty
-        self.total_cost += qty * price
+        self.sent_qty += qty
         self.slices_sent += 1
         self.last_slice_time = time.time()
-        print(f"[VWAP] slice {self.slices_sent}/{self.num_slices} | "
-              f"{self.executed_qty}/{self.target_qty} filled | avg {self.get_execution_avg_price():.2f}")
+        print(f"[VWAP] slice {self.slices_sent}/{self.num_slices} sent | {self.sent_qty}/{self.target_qty} away")
+
+    def get_working_qty(self):
+        """Sent but not yet confirmed by a fill."""
+        return self.sent_qty - self.executed_qty
 
     def get_market_vwap(self):
         if not self.tick_prices:

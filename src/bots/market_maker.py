@@ -21,14 +21,18 @@ class MarketMakerBot(BaseBot):
         # quote state lives on the tick path only. Fills land on the listener
         # thread and just move inventory, which the next re-quote reads.
         self.quote_mid = None
+        self.quote_inventory = None
         self.bid_id = None
         self.ask_id = None
 
     def on_tick(self, symbol, price, timestamp=None):
         if symbol != self.symbol:
             return
-        # leave quotes alone until price drifts away from where they're centered
-        if self.quote_mid is not None and abs(price - self.quote_mid) < self.requote_tolerance:
+        # re-quote when price drifts, and also when a fill has moved inventory,
+        # since inventory is an input to the price we're quoting
+        if (self.quote_mid is not None
+                and abs(price - self.quote_mid) < self.requote_tolerance
+                and self.get_position(self.symbol) == self.quote_inventory):
             return
         self._requote(price)
 
@@ -46,9 +50,13 @@ class MarketMakerBot(BaseBot):
         bid_price = round(mid - half, 2)
         ask_price = round(mid + half, 2)
 
-        # stop quoting the side that would grow a maxed-out position
-        self.bid_id = self.buy(self.symbol, self.quote_qty, bid_price) if inventory < self.max_inventory else None
-        self.ask_id = self.sell(self.symbol, self.quote_qty, ask_price) if inventory > -self.max_inventory else None
+        # size each side to the room left under the cap, so a full fill can't
+        # push inventory past it
+        bid_qty = min(self.quote_qty, self.max_inventory - inventory)
+        ask_qty = min(self.quote_qty, self.max_inventory + inventory)
+        self.bid_id = self.buy(self.symbol, bid_qty, bid_price) if bid_qty > 0 else None
+        self.ask_id = self.sell(self.symbol, ask_qty, ask_price) if ask_qty > 0 else None
 
         self.quote_mid = price
-        print(f"[MM] quoting {bid_price} / {ask_price} | inventory {inventory}")
+        self.quote_inventory = inventory
+        print(f"[MM] quoting {bid_qty}@{bid_price} / {ask_qty}@{ask_price} | inventory {inventory}")
